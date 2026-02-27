@@ -1,0 +1,165 @@
+package com.manager;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class Main {
+
+    public static void main(String[] args) {
+
+        List<User> users = getUsers();
+
+        System.out.println("Testing getUserEmail with all users:");
+        for (User user : users) {
+            Result result = getUserEmailUgly(user);
+
+            if (result.success) {
+                System.out.println("Success: " + result.value);
+            } else {
+                System.out.println("Error: " + result.error);
+            }
+        }
+
+        System.out.println("\nTesting getUserEmail with null user:");
+        Result nullUserResult = getUserEmailUgly(null);
+        if (nullUserResult.success) {
+            System.out.println("Success: " + nullUserResult.value);
+        } else {
+            System.out.println("Error: " + nullUserResult.error);
+        }
+
+        System.out.println("\nTesting withdraw with valid account:");
+        Account account = new Account(100, true);
+        AccountResult withdrawResult = withdrawUgly(account, 50);
+        if (withdrawResult.success) {
+            System.out.println("New balance: " + withdrawResult.account.balance);
+        } else {
+            System.out.println("Error: " + withdrawResult.error);
+        }
+
+        System.out.println("\nTesting withdraw with invalid amount:");
+        withdrawResult = withdrawUgly(account, 150);
+        if (withdrawResult.success) {
+            System.out.println("New balance: " + withdrawResult.account.balance);
+        } else {
+            System.out.println("Error: " + withdrawResult.error);
+        }
+    }
+
+    public static List<User> getUsers() {
+        List<User> users = new ArrayList<>();
+        users.add(new User("a@test.com", true));
+        users.add(new User("b@test.com", false));
+        users.add(new User(null, true));
+        return users;
+    }
+
+    public static Result getUserEmailUgly(User user) {
+
+        Result result = new Result();
+
+        if (user == null) {
+            result.success = false;
+            result.error = DomainError.USER_NOT_FOUND;
+            return result;
+        }
+
+        if (!user.active) {
+            result.success = false;
+            result.error = DomainError.USER_INACTIVE;
+            return result;
+        }
+
+        if (user.email == null) {
+            result.success = false;
+            result.error = DomainError.EMAIL_MISSING;
+            return result;
+        }
+
+        if (user.email.isEmpty()) {
+            result.success = false;
+            result.error = DomainError.EMAIL_MISSING;
+            return result;
+        }
+
+        result.success = true;
+        result.value = user.email;
+        return result;
+    }
+
+    public static AccountResult withdrawUgly(Account account, double amount) {
+
+        AccountResult result = new AccountResult();
+
+        if (account == null) {
+            result.success = false;
+            result.error = DomainError.ACCOUNT_NOT_FOUND;
+            return result;
+        }
+
+        if (!account.active) {
+            result.success = false;
+            result.error = DomainError.USER_INACTIVE;
+            return result;
+        }
+
+        if (amount <= 0) {
+            result.success = false;
+            result.error = DomainError.INVALID_AMOUNT;
+            return result;
+        }
+
+        if (account.balance < amount) {
+            result.success = false;
+            result.error = DomainError.INSUFFICIENT_FUNDS;
+            return result;
+        }
+
+        account.balance = account.balance - amount;
+
+        result.success = true;
+        result.account = account;
+        return result;
+    }
+}
+
+class User {
+    String email;
+    boolean active;
+
+    User(String email, boolean active) {
+        this.email = email;
+        this.active = active;
+    }
+}
+
+class Account {
+    double balance;
+    boolean active;
+
+    Account(double balance, boolean active) {
+        this.balance = balance;
+        this.active = active;
+    }
+}
+
+class Result {
+    boolean success;
+    String value;
+    DomainError error;
+}
+
+class AccountResult {
+    boolean success;
+    Account account;
+    DomainError error;
+}
+
+enum DomainError {
+    USER_NOT_FOUND,
+    USER_INACTIVE,
+    EMAIL_MISSING,
+    ACCOUNT_NOT_FOUND,
+    INVALID_AMOUNT,
+    INSUFFICIENT_FUNDS
+}

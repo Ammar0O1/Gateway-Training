@@ -1,0 +1,1 @@
+This folder is specifically created for blnd to Share all his files and projects.
