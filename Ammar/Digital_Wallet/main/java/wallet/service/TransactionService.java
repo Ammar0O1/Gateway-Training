@@ -1,5 +1,6 @@
 package wallet.service;
 
+import io.vavr.Tuple;
 import io.vavr.Tuple2;
 import io.vavr.control.Either;
 import io.vavr.control.Option;
@@ -21,7 +22,6 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private static final Logger logger = LoggerFactory.getLogger(TransactionService.class);
 
-    // Per-wallet locks for thread safety
     private final ConcurrentHashMap<UUID, Object> walletLocks = new ConcurrentHashMap<>();
 
     public TransactionService(WalletRepository walletRepository, TransactionRepository transactionRepository) {
@@ -29,7 +29,6 @@ public class TransactionService {
         this.transactionRepository = transactionRepository;
     }
 
-    // Get or create a lock for a specific wallet
     private Object getWalletLock(UUID walletId) {
         return walletLocks.computeIfAbsent(walletId, k -> new Object());
     }
@@ -37,100 +36,94 @@ public class TransactionService {
     public Either<WalletError, Transaction> transfer(UUID fromId, UUID toId, Money amount) {
         logger.info("Initiating transfer from wallet {} to wallet {} of amount {}", fromId, toId, amount);
 
-        // CRITICAL: Lock wallets in consistent order to prevent deadlock
-        // Always lock the wallet with the smaller UUID first
+        // Lock wallets in consistent order to prevent deadlock
         UUID firstLock = fromId.compareTo(toId) < 0 ? fromId : toId;
         UUID secondLock = fromId.compareTo(toId) < 0 ? toId : fromId;
 
         synchronized (getWalletLock(firstLock)) {
             synchronized (getWalletLock(secondLock)) {
 
-                // Validate amount
-                Either<InvalidAmountError, Money> amountValidation = Validators.validateAmount(amount);
-                if (amountValidation.isLeft()) {
-                    logger.warn("Invalid transfer amount: {}", amount);
-                    return Either.left(amountValidation.getLeft());
-                }
+                return Validators.validateAmount(amount)
+                        .<WalletError>mapLeft(err -> err)
+                        .flatMap(validAmount ->
+                                Validators.validateDifferentWallets(fromId, toId)
+                                        .<WalletError>mapLeft(err -> err)
+                                        .flatMap(walletIds ->
+                                                // Get both wallets
+                                                getBothWallets(fromId, toId)
+                                                        .flatMap(wallets -> {
+                                                            Wallet fromWallet = wallets._1;
+                                                            Wallet toWallet = wallets._2;
 
-                // Validate not same wallet
-                Either<SelfTransferError, Tuple2<UUID, UUID>> sameWalletValidation =
-                        Validators.validateDifferentWallets(fromId, toId);
-                if (sameWalletValidation.isLeft()) {
-                    logger.warn("Transfer failed: Cannot transfer to same wallet");
-                    return Either.left(sameWalletValidation.getLeft());
-                }
+                                                            // Validate currencies
+                                                            return Validators.validateSameCurrency(fromWallet.getBalance(), toWallet.getBalance())
+                                                                    .<WalletError>mapLeft(err -> err)
+                                                                    .flatMap(currencies ->
+                                                                            Validators.validateSameCurrency(fromWallet.getBalance(), validAmount)
+                                                                                    .<WalletError>mapLeft(err -> err)
+                                                                                    .map(c -> Tuple.of(fromWallet, toWallet))
+                                                                    );
+                                                        })
+                                                        .flatMap(wallets -> {
+                                                            Wallet fromWallet = wallets._1;
+                                                            Wallet toWallet = wallets._2;
 
-                // Find source wallet
-                Option<Wallet> fromWalletOption = walletRepository.findById(fromId);
-                Either<WalletNotFoundError, Wallet> fromWalletValidation = Validators.validateWalletExists(fromWalletOption, fromId);
-                if (fromWalletValidation.isLeft()) {
-                    logger.warn("Source wallet not found for id: {}", fromId);
-                    return Either.left(fromWalletValidation.getLeft());
-                }
-                Wallet fromWallet = fromWalletValidation.get();
-
-                // Find destination wallet
-                Option<Wallet> toWalletOption = walletRepository.findById(toId);
-                Either<WalletNotFoundError, Wallet> toWalletValidation = Validators.validateWalletExists(toWalletOption, toId);
-                if (toWalletValidation.isLeft()) {
-                    logger.warn("Destination wallet not found for id: {}", toId);
-                    return Either.left(toWalletValidation.getLeft());
-                }
-                Wallet toWallet = toWalletValidation.get();
-
-                // Validate same currency between wallets
-                Either<CurrencyMismatchError, Tuple2<Money, Money>> currencyValidation =
-                        Validators.validateSameCurrency(fromWallet.getBalance(), toWallet.getBalance());
-                if (currencyValidation.isLeft()) {
-                    logger.warn("Transfer failed: Currency mismatch between wallets");
-                    return Either.left(currencyValidation.getLeft());
-                }
-
-                // Validate amount currency matches wallet currency
-                Either<CurrencyMismatchError, Tuple2<Money, Money>> amountCurrencyValidation =
-                        Validators.validateSameCurrency(fromWallet.getBalance(), amount);
-                if (amountCurrencyValidation.isLeft()) {
-                    logger.warn("Transfer failed: Amount currency doesn't match wallet currency");
-                    return Either.left(amountCurrencyValidation.getLeft());
-                }
-
-                // Perform withdrawal from source wallet
-                Either<String, Wallet> withdrawResult = fromWallet.withdraw(amount);
-                if (withdrawResult.isLeft()) {
-                    logger.warn("Transfer failed: {}", withdrawResult.getLeft());
-                    return Either.left(new InvalidAmountError(amount));
-                }
-                Wallet updatedFromWallet = withdrawResult.get();
-
-                // Perform deposit to destination wallet
-                Either<String, Wallet> depositResult = toWallet.deposit(amount);
-                if (depositResult.isLeft()) {
-                    logger.warn("Transfer failed: {}", depositResult.getLeft());
-                    return Either.left(new InvalidAmountError(amount));
-                }
-                Wallet updatedToWallet = depositResult.get();
-
-                // Save both wallets
-                walletRepository.save(updatedFromWallet);
-                walletRepository.save(updatedToWallet);
-
-                // Create transaction record
-                Transaction transaction = new Transaction(
-                        UUID.randomUUID(),
-                        Option.of(fromId),
-                        Option.of(toId),
-                        TransactionType.TRANSFER,
-                        amount,
-                        LocalDateTime.now(),
-                        TransactionStatus.SUCCESS
-                );
-
-                transactionRepository.save(transaction);
-
-                logger.info("Transfer successful: {}", transaction.getId());
-                return Either.right(transaction);
+                                                            // Perform transfer
+                                                            return performTransfer(fromWallet, toWallet, validAmount, fromId, toId);
+                                                        })
+                                        )
+                        );
             }
         }
+    }
+
+
+    private Either<WalletError, Tuple2<Wallet, Wallet>> getBothWallets(UUID fromId, UUID toId) {
+        return Validators.validateWalletExists(walletRepository.findById(fromId), fromId)
+                .<WalletError>mapLeft(err -> err)
+                .flatMap(fromWallet ->
+                        Validators.validateWalletExists(walletRepository.findById(toId), toId)
+                                .<WalletError>mapLeft(err -> err)
+                                .map(toWallet -> Tuple.of(fromWallet, toWallet))
+                );
+    }
+
+    // Helper: Perform the actual transfer
+    private Either<WalletError, Transaction> performTransfer(
+            Wallet fromWallet,
+            Wallet toWallet,
+            Money amount,
+            UUID fromId,
+            UUID toId) {
+
+        return fromWallet.withdraw(amount)
+                .mapLeft(error -> (WalletError) new InvalidAmountError(amount))
+                .flatMap(updatedFromWallet ->
+                        toWallet.deposit(amount)
+                                .mapLeft(error -> (WalletError) new InvalidAmountError(amount))
+                                .map(updatedToWallet -> Tuple.of(updatedFromWallet, updatedToWallet))
+                )
+                .map(updatedWallets -> {
+                    // Save both wallets
+                    walletRepository.save(updatedWallets._1);
+                    walletRepository.save(updatedWallets._2);
+
+                    // Create transaction record
+                    Transaction transaction = new Transaction(
+                            UUID.randomUUID(),
+                            Option.of(fromId),
+                            Option.of(toId),
+                            TransactionType.TRANSFER,
+                            amount,
+                            LocalDateTime.now(),
+                            TransactionStatus.SUCCESS
+                    );
+
+                    transactionRepository.save(transaction);
+                    logger.info("Transfer successful: {}", transaction.getId());
+
+                    return transaction;
+                });
     }
 
     public List<Transaction> getHistory(UUID walletId) {
