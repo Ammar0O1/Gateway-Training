@@ -11,7 +11,7 @@ public class Main {
 
         WalletService service = new WalletService();
 
-        // ── Create Wallets ──────────────────────────────────────────
+        // Create Wallets
         System.out.println("========== CREATE WALLETS ==========");
         Wallet ali  = service.createWallet("Ali",  Currency.IQD);
         Wallet sara = service.createWallet("Sara", Currency.IQD);
@@ -21,7 +21,7 @@ public class Main {
         System.out.println(john);
         System.out.println();
 
-        // ── Deposit ─────────────────────────────────────────────────
+        // Deposit 
         System.out.println("========== DEPOSIT ==========");
 
         service.deposit(ali.getId(), new BigDecimal("100000"))
@@ -43,7 +43,7 @@ public class Main {
                 .peekLeft(e -> System.out.println("FAILED  | deposit 0 → " + e.message()));
         System.out.println();
 
-        // ── Withdraw ────────────────────────────────────────────────
+        // Withdraw 
         System.out.println("========== WITHDRAW ==========");
 
         service.withdraw(sara.getId(), new BigDecimal("10000"))
@@ -56,7 +56,7 @@ public class Main {
                 .peekLeft(e -> System.out.println("FAILED  | withdraw 999999 → " + e.message()));
         System.out.println();
 
-        // ── Transfer ────────────────────────────────────────────────
+        // Transfer 
         System.out.println("========== TRANSFER ==========");
 
         // success - same currency
@@ -80,7 +80,7 @@ public class Main {
                 .peekLeft(e -> System.out.println("FAILED  | currency mismatch → " + e.message()));
         System.out.println();
 
-        // ── Balance ─────────────────────────────────────────────────
+        // Balance
         System.out.println("========== BALANCES ==========");
 
         service.getBalance(ali.getId())
@@ -96,7 +96,7 @@ public class Main {
                 .peekLeft(e -> System.out.println("FAILED | " + e.message()));
         System.out.println();
 
-        // ── Transaction History ─────────────────────────────────────
+        // Transaction History
         System.out.println("========== ALI TRANSACTION HISTORY ==========");
         service.getTransactionHistory(ali.getId())
                 .peek(list -> {
